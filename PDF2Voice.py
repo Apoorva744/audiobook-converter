@@ -5,6 +5,7 @@ import os
 import datetime
 import re
 from io import BytesIO
+import sys
 
 # Set up the page configuration (this must be the first Streamlit command)
 st.set_page_config(
@@ -126,13 +127,41 @@ api_key = None
 page_range_option = "All pages"
 custom_page_range = ""
 
+# Check if advanced features are available (for local deployment)
+HAS_OCR = False
+HAS_STT = False
+HAS_AI = False
+
+try:
+    import pytesseract
+    import pdf2image
+    HAS_OCR = True
+except:
+    pass
+
+try:
+    import speech_recognition
+    HAS_STT = True
+except:
+    pass
+
+try:
+    import transformers
+    HAS_AI = True
+except:
+    pass
+
 # Main content area
 st.header("🎯 What would you like to do?")
 
 # Main conversion type selection
+conversion_options = ["📝 Convert Text to Audio"]
+if HAS_STT:
+    conversion_options.append("🎤 Convert Audio to Text")
+
 conversion_type = st.radio(
     "Select conversion type",
-    options=["📝 Convert Text to Audio", "🎤 Convert Audio to Text"],
+    options=conversion_options,
     horizontal=True,
     label_visibility="collapsed"
 )
@@ -181,33 +210,35 @@ if conversion_type == "📝 Convert Text to Audio":
     clean_text = st.sidebar.checkbox("Clean formatting (remove extra spaces/newlines)", value=True)
     remove_special_chars = st.sidebar.checkbox("Remove special characters", value=False)
     
-    # OCR option
-    st.sidebar.header("🔍 Scanned PDF Support")
-    use_ocr = st.sidebar.checkbox(
-        "Enable for scanned/image-based PDFs",
-        value=False,
-        help="Turn this on if your PDF is a scanned document or image. Requires additional software."
-    )
+    # OCR option (only show if available)
+    if HAS_OCR:
+        st.sidebar.header("🔍 Scanned PDF Support")
+        use_ocr = st.sidebar.checkbox(
+            "Enable for scanned/image-based PDFs",
+            value=False,
+            help="Turn this on if your PDF is a scanned document or image. Requires additional software."
+        )
     
-    # Summarization option
-    st.sidebar.header("📝 Quick Summary")
-    enable_summary = st.sidebar.checkbox(
-        "Generate a quick summary",
-        value=False,
-        help="Get a short summary of your document before converting to audio"
-    )
-    summary_method = st.sidebar.selectbox(
-        "Summary Type",
-        options=["simple", "openai", "huggingface"],
-        format_func=lambda x: {
-            "simple": "Fast & Simple (Recommended)",
-            "openai": "AI-Powered (Requires API Key)",
-            "huggingface": "Advanced AI (Large Download)"
-        }[x],
-        help="Choose how you want the summary to be generated"
-    )
-    if summary_method == "openai":
-        api_key = st.sidebar.text_input("OpenAI API Key", type="password", help="Required for AI-powered summary")
+    # Summarization option (only show if available)
+    if HAS_AI:
+        st.sidebar.header("📝 Quick Summary")
+        enable_summary = st.sidebar.checkbox(
+            "Generate a quick summary",
+            value=False,
+            help="Get a short summary of your document before converting to audio"
+        )
+        summary_method = st.sidebar.selectbox(
+            "Summary Type",
+            options=["simple", "openai", "huggingface"],
+            format_func=lambda x: {
+                "simple": "Fast & Simple (Recommended)",
+                "openai": "AI-Powered (Requires API Key)",
+                "huggingface": "Advanced AI (Large Download)"
+            }[x],
+            help="Choose how you want the summary to be generated"
+        )
+        if summary_method == "openai":
+            api_key = st.sidebar.text_input("OpenAI API Key", type="password", help="Required for AI-powered summary")
     
     # Page range selection
     st.sidebar.header("📄 Page Selection")
@@ -235,163 +266,15 @@ if conversion_type == "📝 Convert Text to Audio":
 elif conversion_type == "🎤 Convert Audio to Text":
     st.header("🎤 Upload Your Audio")
     st.info("Convert audio files to text using speech recognition")
-    
-    # Audio to Text specific settings in sidebar
-    st.sidebar.header("⚙️ Transcription Settings")
-    
-    stt_engine = st.sidebar.selectbox(
-        "🎤 Recognition Engine",
-        options=["google", "sphinx"],
-        format_func=lambda x: {
-            "google": "Google (Online, High Accuracy)",
-            "sphinx": "Sphinx (Offline, Faster)"
-        }[x],
-        help="Choose speech recognition engine"
-    )
-    
-    stt_language = st.sidebar.selectbox(
-        "🌍 Audio Language",
-        options=["en-US", "es-ES", "fr-FR", "de-DE", "it-IT", "pt-BR"],
-        format_func=lambda x: {
-            "en-US": "English (US)",
-            "es-ES": "Spanish",
-            "fr-FR": "French",
-            "de-DE": "German",
-            "it-IT": "Italian",
-            "pt-BR": "Portuguese (Brazil)"
-        }[x]
-    )
-    
-    # Additional STT features
-    st.sidebar.header("🔧 Advanced Options")
-    
-    enable_timestamps = st.sidebar.checkbox(
-        "Add timestamps",
-        value=False,
-        help="Add timestamps to the transcription"
-    )
-    
-    enable_punctuation = st.sidebar.checkbox(
-        "Auto punctuation",
-        value=True,
-        help="Automatically add punctuation to the text"
-    )
-    
-    enable_summary = st.sidebar.checkbox(
-        "Generate summary of transcription",
-        value=False,
-        help="Create a summary of the transcribed text"
-    )
+    st.warning("⚠️ This feature requires additional dependencies. Please run the app locally to use Speech-to-Text.")
     
     # Audio file uploader
     audio_file = st.file_uploader(
         "Choose an audio file",
         type=['wav', 'flac', 'aiff', 'aiffc'],
-        help="Upload WAV, FLAC, or AIFF audio files"
+        help="Upload WAV, FLAC, or AIFF audio files",
+        disabled=True
     )
-    
-    if audio_file:
-        st.success(f"✅ Audio file uploaded: {audio_file.name}")
-        
-        # Audio player
-        st.audio(audio_file)
-        
-        # Audio info
-        st.info(f"📊 File size: {audio_file.size / 1024:.2f} KB")
-        
-        # Transcribe button
-        if st.button("🎤 Transcribe to Text", type="primary", use_container_width=True):
-            with st.spinner("Transcribing audio..."):
-                try:
-                    # Save audio temporarily
-                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_audio:
-                        tmp_audio.write(audio_file.read())
-                        tmp_audio_path = tmp_audio.name
-                    
-                    # Transcribe
-                    from stt_module import get_stt_manager
-                    stt_manager = get_stt_manager()
-                    transcribed_text = stt_manager.transcribe(
-                        tmp_audio_path,
-                        engine=stt_engine,
-                        language=stt_language
-                    )
-                    
-                    # Clean up
-                    os.unlink(tmp_audio_path)
-                    
-                    # Apply punctuation if enabled
-                    if enable_punctuation:
-                        # Simple punctuation enhancement
-                        transcribed_text = transcribed_text.replace("  ", ". ")
-                        transcribed_text = transcribed_text.replace("  ", "? ")
-                        transcribed_text = transcribed_text.replace("  ", "! ")
-                    
-                    # Add timestamps if enabled
-                    if enable_timestamps:
-                        words = transcribed_text.split()
-                        timestamped_text = ""
-                        for i, word in enumerate(words):
-                            if i % 20 == 0:  # Add timestamp every 20 words
-                                timestamp = f"[{(i/150):.1f}s]"  # Assuming 150 words per minute
-                                timestamped_text += f" {timestamp} "
-                            timestamped_text += word + " "
-                        transcribed_text = timestamped_text.strip()
-                    
-                    # Display result
-                    st.subheader("📝 Transcribed Text")
-                    edited_transcription = st.text_area(
-                        "Transcription (editable)",
-                        transcribed_text,
-                        height=300
-                    )
-                    
-                    # Statistics
-                    word_count = len(edited_transcription.split())
-                    char_count = len(edited_transcription)
-                    est_duration = word_count / 150  # Assuming 150 words per minute
-                    
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        st.metric("📝 Words", word_count)
-                    with col2:
-                        st.metric("🔤 Characters", char_count)
-                    with col3:
-                        st.metric("⏱️ Duration", f"{est_duration:.1f} min")
-                    
-                    # Generate summary if enabled
-                    if enable_summary:
-                        st.subheader("📝 Summary")
-                        try:
-                            from summarization_module import get_summarizer
-                            summarizer = get_summarizer(method="simple")
-                            summary = summarizer.summarize(edited_transcription, max_length=150)
-                            st.info(summary)
-                        except:
-                            st.warning("Summary generation failed")
-                    
-                    # Download buttons
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.download_button(
-                            label="⬇️ Download Text",
-                            data=edited_transcription,
-                            file_name=f"transcription_{audio_file.name}.txt",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
-                    with col2:
-                        st.download_button(
-                            label="⬇️ Download as SRT",
-                            data=edited_transcription,
-                            file_name=f"transcription_{audio_file.name}.srt",
-                            mime="text/plain",
-                            use_container_width=True
-                        )
-                    
-                except Exception as e:
-                    st.error(f"Transcription failed: {str(e)}")
-                    st.info("Note: Google Speech Recognition requires internet connection. Sphinx works offline but may have lower accuracy.")
 
 def preprocess_text(text, clean=True, remove_special=False):
     """
